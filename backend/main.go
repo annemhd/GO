@@ -47,13 +47,25 @@ type Reservation struct {
 	ID_creneau     int `json:"id_creneau"`
 }
 
+type UserReservation struct {
+	ID_reservation    int    `json:"id_reservation"`
+	ID_salon          int    `json:"id_salon"`
+	ID_coiffeur       int    `json:"id_coiffeur"`
+	ID_creneau        int    `json:"id_creneau"`
+	Date              string `json:"date"`
+	CoiffeurFirstname string `json:"coiffeur_firstname"`
+	CoiffeurLastname  string `json:"coiffeur_lastname"`
+	DateCreneau       string `json:"date_creneau"`
+}
+
 var (
-	db          *sql.DB
-	clientsMu   sync.RWMutex
-	salonsMu    sync.RWMutex
-	coiffeursMu sync.RWMutex
-	creneauxMu  sync.RWMutex
-	nextID      = 1
+	db             *sql.DB
+	clientsMu      sync.RWMutex
+	salonsMu       sync.RWMutex
+	coiffeursMu    sync.RWMutex
+	creneauxMu     sync.RWMutex
+	reservationsMu sync.RWMutex
+	nextID         = 1
 )
 
 // / MAIN
@@ -147,6 +159,24 @@ func main() {
 	http.HandleFunc("/api/salons/add", addSalonHandler)
 	http.HandleFunc("/api/salons/update", updateSalonHandler)
 	http.HandleFunc("/api/salons/delete", deleteSalonHandler)
+
+	/// Coiffeurs
+	http.HandleFunc("/api/coiffeurs", getCoiffeursHandler)
+	http.HandleFunc("/api/coiffeur/add", addCoiffeurHandler)
+	http.HandleFunc("/api/coiffeur/update", updateCoiffeurHandler)
+	http.HandleFunc("/api/coiffeur/delete", deleteCoiffeurHandler)
+
+	/// Creneaux
+	http.HandleFunc("/api/creneaux", getCreneauxHandler)
+	http.HandleFunc("/api/creneaux/add", addCreneauHandler)
+	http.HandleFunc("/api/creneaux/update", updateCreneauHandler)
+	http.HandleFunc("/api/creneaux/delete", deleteCreneauHandler)
+
+	/// Reservations
+	http.HandleFunc("/api/reservations", getReservationsHandler)
+	http.HandleFunc("/api/reservations/add", addReservationHandler)
+	http.HandleFunc("/api/reservations/update", updateReservationHandler)
+	http.HandleFunc("/api/reservations/delete", deleteReservationHandler)
 
 	port := 8080
 	fmt.Printf("Server is running on port %d...\n", port)
@@ -539,7 +569,7 @@ func deleteCoiffeurHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	coiffeursMu.Lock()
-	defer clientsMu.Unlock()
+	defer coiffeursMu.Unlock()
 	row := db.QueryRow("SELECT id_coiffeur FROM coiffeurs WHERE id_coiffeur=?", id)
 	if err := row.Scan(&id); err != nil {
 		if err == sql.ErrNoRows {
@@ -674,8 +704,8 @@ func deleteCreneauHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coiffeursMu.Lock()
-	defer clientsMu.Unlock()
+	creneauxMu.Lock()
+	defer creneauxMu.Unlock()
 	row := db.QueryRow("SELECT id_creneau FROM creneaux WHERE id_creneau=?", id)
 	if err := row.Scan(&id); err != nil {
 		if err == sql.ErrNoRows {
@@ -810,8 +840,8 @@ func deleteReservationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coiffeursMu.Lock()
-	defer clientsMu.Unlock()
+	reservationsMu.Lock()
+	defer reservationsMu.Unlock()
 	row := db.QueryRow("SELECT id_reservation FROM reservations WHERE id_reservation=?", id)
 	if err := row.Scan(&id); err != nil {
 		if err == sql.ErrNoRows {
@@ -831,4 +861,49 @@ func deleteReservationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+
+}
+
+// //
+func getReservationsByClientID(clientID int) ([]UserReservation, error) {
+	rows, err := db.Query(`
+        SELECT 
+            reservations.*, 
+            coiffeurs.firstname AS coiffeur_firstname, 
+            coiffeurs.lastname AS coiffeur_lastname,
+            creneaux.date_creneau
+        FROM reservations
+        JOIN clients ON reservations.id_client = clients.id_client
+        JOIN coiffeurs ON reservations.id_coiffeur = coiffeurs.id_coiffeur
+        JOIN creneaux ON reservations.id_creneau = creneaux.id_creneau
+        WHERE clients.id_client = ?
+    `, clientID)
+
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reservationList []UserReservation
+	for rows.Next() {
+		var reservation UserReservation
+		err := rows.Scan(
+			&reservation.ID_reservation,
+			&reservation.ID_salon,
+			&reservation.ID_coiffeur,
+			&reservation.ID_creneau,
+			&reservation.Date,
+			&reservation.CoiffeurFirstname,
+			&reservation.CoiffeurLastname,
+			&reservation.DateCreneau,
+		)
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		reservationList = append(reservationList, reservation)
+	}
+
+	return reservationList, nil
 }
