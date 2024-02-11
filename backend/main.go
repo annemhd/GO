@@ -33,18 +33,19 @@ type Coiffeur struct {
 	Lastname    string `json:"lastname"`
 }
 
+type Creneau struct {
+	ID_creneau   int    `json:"id_creanau"`
+	ID_coiffeur  int    `json:"id_coiffeur"`
+	Date         string `json:"date"`
+	Availability bool   `json:"availability"`
+}
+
 type Reservation struct {
 	ID_reservation int    `json:"id_reservation"`
 	ID_salon       int    `json:"id_salon"`
 	ID_coiffeur    int    `json:"id_coiffeur"`
+	ID_creneau     int    `json:"id_creneau"`
 	Date           string `json:"date"`
-}
-
-type Creneau struct {
-	ID_crenau    int    `json:"id_creanau"`
-	ID_coiffeur  int    `json:"id_coiffeur"`
-	Date         string `json:"date"`
-	Availability bool   `json:"availability"`
 }
 
 var (
@@ -52,6 +53,7 @@ var (
 	clientsMu   sync.RWMutex
 	salonsMu    sync.RWMutex
 	coiffeursMu sync.RWMutex
+	creneauxMu  sync.RWMutex
 	nextID      = 1
 )
 
@@ -106,12 +108,11 @@ func main() {
 	}
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS reservations (
-			id_reservation INT AUTO_INCREMENT PRIMARY KEY,
-			id_salon INT,
+		CREATE TABLE IF NOT EXISTS creneaux (
+			id_creneau INT AUTO_INCREMENT PRIMARY KEY,
 			id_coiffeur INT,
-			date_reservation DATETIME,
-			FOREIGN KEY (id_salon) REFERENCES salons(id_salon),
+			date_creneau DATETIME,
+			availability BOOLEAN,
 			FOREIGN KEY (id_coiffeur) REFERENCES coiffeurs(id_coiffeur)
 		);
     `)
@@ -120,12 +121,15 @@ func main() {
 	}
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS creneaux (
-			id_creneau INT AUTO_INCREMENT PRIMARY KEY,
+		CREATE TABLE IF NOT EXISTS reservations (
+			id_reservation INT AUTO_INCREMENT PRIMARY KEY,
+			id_salon INT,
 			id_coiffeur INT,
-			date_creneau DATETIME,
-			availability BOOLEAN,
-			FOREIGN KEY (id_coiffeur) REFERENCES coiffeurs(id_coiffeur)
+			id_creneau INT,
+			date_reservation DATETIME,
+			FOREIGN KEY (id_salon) REFERENCES salons(id_salon),
+			FOREIGN KEY (id_coiffeur) REFERENCES coiffeurs(id_coiffeur),
+			FOREIGN KEY (id_creneau) REFERENCES creneaux(id_creneau)
 		);
     `)
 	if err != nil {
@@ -549,6 +553,142 @@ func deleteCoiffeurHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.Exec("DELETE FROM coiffeurs WHERE id_coiffeur=?", id)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// CRENEAU
+func addCreneauHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var newCreneau Creneau
+	err := json.NewDecoder(r.Body).Decode(&newCreneau)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec("INSERT INTO creneaux (id_coiffeur, date, availability) VALUES (?, ?, ?)", newCreneau.ID_coiffeur, newCreneau.Date, newCreneau.Availability)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	newCreneau.ID_coiffeur = int(id)
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(newCreneau)
+}
+
+func getCreneauxHandler(w http.ResponseWriter, r *http.Request) {
+	creneauxMu.RLock()
+	defer creneauxMu.RUnlock()
+
+	// Fetch users from the database
+	rows, err := db.Query("SELECT * FROM creneaux")
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var creneauList []Creneau
+	for rows.Next() {
+		var creneau Creneau
+		err := rows.Scan(&creneau.ID_coiffeur, &creneau.Date, &creneau.Availability)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		creneauList = append(creneauList, creneau)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(creneauList)
+}
+
+func updateCreneauHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var updatedCreneau Creneau
+	err := json.NewDecoder(r.Body).Decode(&updatedCreneau)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	creneauxMu.RLock()
+	defer creneauxMu.RUnlock()
+	row := db.QueryRow("SELECT id_creneau FROM creneaux WHERE id_creneau=?", updatedCreneau.ID_creneau)
+	if err := row.Scan(&updatedCreneau.ID_creneau); err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("UPDATE creneaux SET id_coiffeur=?, date=?, availability=? WHERE id_creneau=?", updatedCreneau.ID_coiffeur, updatedCreneau.Date, updatedCreneau.Availability, updatedCreneau.ID_creneau)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(updatedCreneau)
+}
+
+func deleteCreneauHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	idParam := r.URL.Query().Get("id_creneau")
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	coiffeursMu.Lock()
+	defer clientsMu.Unlock()
+	row := db.QueryRow("SELECT id_creneau FROM creneaux WHERE id_creneau=?", id)
+	if err := row.Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM creneaux WHERE id_creneau=?", id)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
