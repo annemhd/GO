@@ -1,20 +1,12 @@
 version: '3'
 
 services:
-  # go-api:
-  #   build:
-  #     context: ./backend  # Path to your GoLang API code
-  #   ports:
-  #     - "8080:8080"
-  #   depends_on:
-  #     - react-app
-
-  # react-app:
-  #   build:
-  #     context: ./frontend  # Path to your React app code
-  #   ports:
-  #     - "3000:3000"
-
+  go-api:
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+      
   mysql:
     image: mysql:latest
     environment:

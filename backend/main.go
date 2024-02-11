@@ -34,9 +34,9 @@ type Coiffeur struct {
 }
 
 type Creneau struct {
-	ID_creneau   int    `json:"id_creanau"`
+	ID_creneau   int    `json:"id_creneau"`
 	ID_coiffeur  int    `json:"id_coiffeur"`
-	Date         string `json:"date"`
+	Date         string `json:"date_creneau"`
 	Availability bool   `json:"availability"`
 }
 
@@ -110,6 +110,7 @@ func main() {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS coiffeurs (
 			id_coiffeur INT AUTO_INCREMENT PRIMARY KEY,
+			id_salon INT,
 			firstname VARCHAR(150),
 			lastname VARCHAR(150)
 		);
@@ -122,9 +123,8 @@ func main() {
 		CREATE TABLE IF NOT EXISTS creneaux (
 			id_creneau INT AUTO_INCREMENT PRIMARY KEY,
 			id_coiffeur INT,
-			date_creneau DATETIME,
-			availability BOOLEAN,
-			FOREIGN KEY (id_coiffeur) REFERENCES coiffeurs(id_coiffeur)
+			date_creneau VARCHAR(150),
+			availability BOOLEAN
 		);
     `)
 	if err != nil {
@@ -136,11 +136,7 @@ func main() {
 			id_reservation INT AUTO_INCREMENT PRIMARY KEY,
 			id_salon INT,
 			id_coiffeur INT,
-			id_creneau INT,
-			date_reservation DATETIME,
-			FOREIGN KEY (id_salon) REFERENCES salons(id_salon),
-			FOREIGN KEY (id_coiffeur) REFERENCES coiffeurs(id_coiffeur),
-			FOREIGN KEY (id_creneau) REFERENCES creneaux(id_creneau)
+			id_creneau INT
 		);
     `)
 	if err != nil {
@@ -605,7 +601,7 @@ func addCreneauHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec("INSERT INTO creneaux (id_coiffeur, date, availability) VALUES (?, ?, ?)", newCreneau.ID_coiffeur, newCreneau.Date, newCreneau.Availability)
+	result, err := db.Exec("INSERT INTO creneaux (id_coiffeur, date_creneau, availability) VALUES (?, ?, ?)", newCreneau.ID_coiffeur, newCreneau.Date, newCreneau.Availability)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -619,7 +615,7 @@ func addCreneauHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newCreneau.ID_coiffeur = int(id)
+	newCreneau.ID_creneau = int(id)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(newCreneau)
@@ -641,7 +637,7 @@ func getCreneauxHandler(w http.ResponseWriter, r *http.Request) {
 	var creneauList []Creneau
 	for rows.Next() {
 		var creneau Creneau
-		err := rows.Scan(&creneau.ID_coiffeur, &creneau.Date, &creneau.Availability)
+		err := rows.Scan(&creneau.ID_creneau, &creneau.ID_coiffeur, &creneau.Date, &creneau.Availability)
 		if err != nil {
 			log.Println(err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -741,7 +737,8 @@ func addReservationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec("INSERT INTO reservations (id_salon, id_coiffeur, date, availability) VALUES (?, ?, ?)", newReservation.ID_salon, newReservation.ID_coiffeur, newReservation.ID_creneau)
+	result, err := db.Exec("INSERT INTO reservations (id_salon, id_coiffeur, id_creneau) VALUES (?, ?, ?)", newReservation.ID_salon, newReservation.ID_coiffeur, newReservation.ID_creneau)
+	_, err = db.Exec("UPDATE creneaux SET availability=false WHERE id_creneau=?", newReservation.ID_creneau)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -762,8 +759,8 @@ func addReservationHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getReservationsHandler(w http.ResponseWriter, r *http.Request) {
-	creneauxMu.RLock()
-	defer creneauxMu.RUnlock()
+	reservationsMu.RLock()
+	defer reservationsMu.RUnlock()
 
 	// Fetch users from the database
 	rows, err := db.Query("SELECT * FROM reservations")
@@ -862,48 +859,4 @@ func deleteReservationHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
-}
-
-// //
-func getReservationsByClientID(clientID int) ([]UserReservation, error) {
-	rows, err := db.Query(`
-        SELECT 
-            reservations.*, 
-            coiffeurs.firstname AS coiffeur_firstname, 
-            coiffeurs.lastname AS coiffeur_lastname,
-            creneaux.date_creneau
-        FROM reservations
-        JOIN clients ON reservations.id_client = clients.id_client
-        JOIN coiffeurs ON reservations.id_coiffeur = coiffeurs.id_coiffeur
-        JOIN creneaux ON reservations.id_creneau = creneaux.id_creneau
-        WHERE clients.id_client = ?
-    `, clientID)
-
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-	defer rows.Close()
-
-	var reservationList []UserReservation
-	for rows.Next() {
-		var reservation UserReservation
-		err := rows.Scan(
-			&reservation.ID_reservation,
-			&reservation.ID_salon,
-			&reservation.ID_coiffeur,
-			&reservation.ID_creneau,
-			&reservation.Date,
-			&reservation.CoiffeurFirstname,
-			&reservation.CoiffeurLastname,
-			&reservation.DateCreneau,
-		)
-		if err != nil {
-			log.Println(err)
-			return nil, err
-		}
-		reservationList = append(reservationList, reservation)
-	}
-
-	return reservationList, nil
 }
