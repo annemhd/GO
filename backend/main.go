@@ -41,11 +41,10 @@ type Creneau struct {
 }
 
 type Reservation struct {
-	ID_reservation int    `json:"id_reservation"`
-	ID_salon       int    `json:"id_salon"`
-	ID_coiffeur    int    `json:"id_coiffeur"`
-	ID_creneau     int    `json:"id_creneau"`
-	Date           string `json:"date"`
+	ID_reservation int `json:"id_reservation"`
+	ID_salon       int `json:"id_salon"`
+	ID_coiffeur    int `json:"id_coiffeur"`
+	ID_creneau     int `json:"id_creneau"`
 }
 
 var (
@@ -147,7 +146,7 @@ func main() {
 	http.HandleFunc("/api/salons", getSalonsHandler)
 	http.HandleFunc("/api/salons/add", addSalonHandler)
 	http.HandleFunc("/api/salons/update", updateSalonHandler)
-	http.HandleFunc("/api/salons/delete", deleteClientHandler)
+	http.HandleFunc("/api/salons/delete", deleteSalonHandler)
 
 	port := 8080
 	fmt.Printf("Server is running on port %d...\n", port)
@@ -689,6 +688,142 @@ func deleteCreneauHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.Exec("DELETE FROM creneaux WHERE id_creneau=?", id)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// RESERVATION
+func addReservationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var newReservation Reservation
+	err := json.NewDecoder(r.Body).Decode(&newReservation)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec("INSERT INTO reservations (id_salon, id_coiffeur, date, availability) VALUES (?, ?, ?)", newReservation.ID_salon, newReservation.ID_coiffeur, newReservation.ID_creneau)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	newReservation.ID_reservation = int(id)
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(newReservation)
+}
+
+func getReservationsHandler(w http.ResponseWriter, r *http.Request) {
+	creneauxMu.RLock()
+	defer creneauxMu.RUnlock()
+
+	// Fetch users from the database
+	rows, err := db.Query("SELECT * FROM reservations")
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var reservationList []Reservation
+	for rows.Next() {
+		var reservation Reservation
+		err := rows.Scan(&reservation.ID_reservation, &reservation.ID_salon, &reservation.ID_coiffeur, &reservation.ID_creneau)
+		if err != nil {
+			log.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		reservationList = append(reservationList, reservation)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(reservationList)
+}
+
+func updateReservationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var updatedReservation Reservation
+	err := json.NewDecoder(r.Body).Decode(&updatedReservation)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	creneauxMu.RLock()
+	defer creneauxMu.RUnlock()
+	row := db.QueryRow("SELECT id_reservation FROM reservations WHERE id_reservation=?", updatedReservation.ID_reservation)
+	if err := row.Scan(&updatedReservation.ID_reservation); err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("UPDATE reservations SET id_salon=?, id_coiffeur=?, id_creneau=? WHERE id_reservation=?", updatedReservation.ID_salon, updatedReservation.ID_coiffeur, updatedReservation.ID_creneau, updatedReservation.ID_reservation)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(updatedReservation)
+}
+
+func deleteReservationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	idParam := r.URL.Query().Get("id_reservation")
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	coiffeursMu.Lock()
+	defer clientsMu.Unlock()
+	row := db.QueryRow("SELECT id_reservation FROM reservations WHERE id_reservation=?", id)
+	if err := row.Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM reservations WHERE id_reservation=?", id)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
